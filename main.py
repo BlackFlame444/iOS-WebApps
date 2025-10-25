@@ -1,17 +1,20 @@
-from flask import Flask, render_template_string, request, jsonify
+from flask import Flask, render_template_string, request, jsonify, session
 import requests
 from bs4 import BeautifulSoup
 import random
 import urllib.request
 import json
 import os
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'dev-secret-key-change-in-production')
+app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(days=1)
 
 class SearchApp:
-    def __init__(self):
-        # API keys
-        self.NUMVERIFY_API_KEY = "your_key_here"
+    def __init__(self, api_key=None):
+        # API key can be passed during initialization or set later
+        self.NUMVERIFY_API_KEY = api_key
         self.USERAGENTS = [
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
@@ -21,6 +24,10 @@ class SearchApp:
         self.NUMVERIFY_URL = "http://apilayer.net/api/validate?access_key="
         self.OK_LOGIN_URL = 'https://www.ok.ru/dk?st.cmd=anonymMain&st.accRecovery=on&st.error=errors.password.wrong'
         self.OK_RECOVER_URL = 'https://www.ok.ru/dk?st.cmd=anonymRecoveryAfterFailedLogin&st._aid=LeftColumn_Login_ForgotPassword'
+
+    def set_api_key(self, api_key):
+        """Set or update the API key"""
+        self.NUMVERIFY_API_KEY = api_key
 
     def check_internet(self):
         try:
@@ -105,6 +112,10 @@ class SearchApp:
     def phone_search(self, telcode):
         results = []
         
+        # Check if API key is set
+        if not self.NUMVERIFY_API_KEY:
+            return {"error": "Numverify API key not set. Please enter your API key above."}
+
         if not telcode or not telcode.startswith("+") or not telcode[1:].isdigit():
             return {"error": "Phone number must start with '+' and contain only digits!"}
 
@@ -182,9 +193,10 @@ class SearchApp:
 
         return results
 
+# Global search app instance
 search_app = SearchApp()
 
-# HTML Template
+# HTML Template with API key input
 HTML_TEMPLATE = '''
 <!DOCTYPE html>
 <html>
@@ -210,6 +222,17 @@ HTML_TEMPLATE = '''
             flex-direction: column;
             gap: 20px;
         }
+        .api-key-section {
+            margin-bottom: 15px;
+            padding: 15px;
+            background-color: #1a1a1a;
+            border-radius: 5px;
+            border-left: 4px solid #4B0082;
+        }
+        .api-key-section h3 {
+            margin-top: 0;
+            color: #800080;
+        }
         .input-section {
             display: flex;
             gap: 10px;
@@ -220,7 +243,16 @@ HTML_TEMPLATE = '''
             padding: 15px;
             font-size: 16px;
             background-color: #333333;
-            color: red;
+            color: white;
+            border: 1px solid #800080;
+            border-radius: 5px;
+        }
+        input[type="password"] {
+            flex: 1;
+            padding: 15px;
+            font-size: 16px;
+            background-color: #333333;
+            color: white;
             border: 1px solid #800080;
             border-radius: 5px;
         }
@@ -232,6 +264,7 @@ HTML_TEMPLATE = '''
             border-radius: 5px;
             cursor: pointer;
             font-size: 16px;
+            white-space: nowrap;
         }
         button:hover {
             background-color: #000000;
@@ -251,21 +284,90 @@ HTML_TEMPLATE = '''
         }
         .error {
             color: #ff4444;
+            background-color: #331111;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #ff4444;
         }
         .success {
             color: #44ff44;
+            background-color: #113311;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #44ff44;
+        }
+        .warning {
+            color: #ffaa00;
+            background-color: #332200;
+            padding: 10px;
+            border-radius: 5px;
+            border-left: 4px solid #ffaa00;
         }
         .footer {
             margin-top: 20px;
             font-size: 12px;
             color: #888;
         }
+        .api-status {
+            display: inline-block;
+            padding: 5px 10px;
+            border-radius: 15px;
+            font-size: 12px;
+            margin-left: 10px;
+        }
+        .api-set {
+            background-color: #113311;
+            color: #44ff44;
+        }
+        .api-not-set {
+            background-color: #331111;
+            color: #ff4444;
+        }
+        .instructions {
+            background-color: #1a1a1a;
+            padding: 15px;
+            border-radius: 5px;
+            font-size: 14px;
+            margin-bottom: 20px;
+        }
+        .instructions h4 {
+            margin-top: 0;
+            color: #800080;
+        }
     </style>
 </head>
 <body>
     <div class="header">0DAY SEARCH</div>
+    
+    <div class="instructions">
+        <h4>How to get your API Key:</h4>
+        <ol>
+            <li>Go to <a href="https://numverify.com" style="color: #800080;" target="_blank">numverify.com</a></li>
+            <li>Sign up for a free account</li>
+            <li>Get your API key from the dashboard</li>
+            <li>Enter it below (it will be saved for this session)</li>
+        </ol>
+    </div>
+    
     <div class="container">
-        <form method="POST">
+        <div class="api-key-section">
+            <h3>Numverify API Key 
+                <span class="api-status {{ 'api-set' if api_key_set else 'api-not-set' }}">
+                    {{ '✓ SET' if api_key_set else '✗ NOT SET' }}
+                </span>
+            </h3>
+            <form method="POST" action="/set-api-key">
+                <div class="input-section">
+                    <input type="password" name="api_key" placeholder="Enter your Numverify API key" value="{{ current_api_key }}">
+                    <button type="submit">Save API Key</button>
+                </div>
+            </form>
+            {% if api_key_message %}
+                <div class="{{ api_key_message_type }}">{{ api_key_message }}</div>
+            {% endif %}
+        </div>
+
+        <form method="POST" action="/">
             <div class="input-section">
                 <input type="text" name="phone_number" placeholder="Enter phone number (e.g., +79123456789)" value="{{ phone_number }}">
                 <button type="submit">SEARCH</button>
@@ -283,7 +385,19 @@ HTML_TEMPLATE = '''
                     {% else %}
                         {% for key, value in result.items() %}
                             {% if key not in ['source', 'error'] %}
-                                {{ key|replace('_', ' ')|title }}: {{ value }}<br>
+                                {% if key == 'additional_sources' %}
+                                    <strong>Additional Sources:</strong><br>
+                                    {% for source_name, source_url in value.items() %}
+                                        • <a href="{{ source_url }}" target="_blank" style="color: #800080;">{{ source_name|replace('_', ' ')|title }}</a><br>
+                                    {% endfor %}
+                                {% elif key == 'address' %}
+                                    <strong>Address:</strong><br>
+                                    {% for addr_key, addr_value in value.items() %}
+                                        &nbsp;&nbsp;{{ addr_key }}: {{ addr_value }}<br>
+                                    {% endfor %}
+                                {% else %}
+                                    {{ key|replace('_', ' ')|title }}: {{ value }}<br>
+                                {% endif %}
                             {% endif %}
                         {% endfor %}
                     {% endif %}
@@ -293,15 +407,51 @@ HTML_TEMPLATE = '''
         {% endif %}
         
         {% if error %}
-        <div class="result-item error">
+        <div class="error">
             {{ error }}
         </div>
         {% endif %}
         
         <div class="footer">
-            © 2025 dev by tt volfran
+            © 2025 dev by tt volfran | API Key is stored in your session and not saved on server
         </div>
     </div>
+    
+    <script>
+        // Simple client-side validation
+        document.addEventListener('DOMContentLoaded', function() {
+            const apiKeyInput = document.querySelector('input[name="api_key"]');
+            const phoneInput = document.querySelector('input[name="phone_number"]');
+            
+            if (apiKeyInput && !apiKeyInput.value) {
+                apiKeyInput.focus();
+            }
+            
+            // Show/hide API key
+            if (apiKeyInput) {
+                const toggleVisibility = document.createElement('button');
+                toggleVisibility.type = 'button';
+                toggleVisibility.textContent = '👁';
+                toggleVisibility.style.background = 'transparent';
+                toggleVisibility.style.border = 'none';
+                toggleVisibility.style.color = '#800080';
+                toggleVisibility.style.cursor = 'pointer';
+                toggleVisibility.style.marginLeft = '5px';
+                
+                toggleVisibility.addEventListener('click', function() {
+                    if (apiKeyInput.type === 'password') {
+                        apiKeyInput.type = 'text';
+                        toggleVisibility.textContent = '👁‍🗨';
+                    } else {
+                        apiKeyInput.type = 'password';
+                        toggleVisibility.textContent = '👁';
+                    }
+                });
+                
+                apiKeyInput.parentNode.appendChild(toggleVisibility);
+            }
+        });
+    </script>
 </body>
 </html>
 '''
@@ -311,22 +461,75 @@ def index():
     results = None
     error = None
     phone_number = ""
+    api_key_set = bool(session.get('numverify_api_key'))
+    current_api_key = session.get('numverify_api_key', '')
+    
+    # Mask the API key for display
+    display_api_key = ""
+    if current_api_key:
+        if len(current_api_key) > 8:
+            display_api_key = current_api_key[:4] + "*" * (len(current_api_key) - 8) + current_api_key[-4:]
+        else:
+            display_api_key = "*" * len(current_api_key)
     
     if request.method == 'POST':
         phone_number = request.form.get('phone_number', '')
         if phone_number:
+            # Update the search app with current API key
+            search_app.set_api_key(session.get('numverify_api_key'))
+            
             results = search_app.phone_search(phone_number)
-            if 'error' in results:
+            if isinstance(results, dict) and 'error' in results:
                 error = results['error']
                 results = None
     
     return render_template_string(HTML_TEMPLATE, 
                                 results=results, 
                                 error=error, 
-                                phone_number=phone_number)
+                                phone_number=phone_number,
+                                api_key_set=api_key_set,
+                                current_api_key=display_api_key,
+                                api_key_message=session.pop('api_key_message', None),
+                                api_key_message_type=session.pop('api_key_message_type', ''))
+
+@app.route('/set-api-key', methods=['POST'])
+def set_api_key():
+    api_key = request.form.get('api_key', '').strip()
+    
+    if api_key:
+        session['numverify_api_key'] = api_key
+        session['api_key_message'] = "API key saved successfully! It will be stored for this session."
+        session['api_key_message_type'] = "success"
+        
+        # Test the API key
+        search_app.set_api_key(api_key)
+        try:
+            test_response = requests.get(f"http://apilayer.net/api/validate?access_key={api_key}&number=+15555555555", timeout=5)
+            if test_response.status_code == 200:
+                session['api_key_message'] = "API key saved and validated successfully!"
+            else:
+                session['api_key_message'] = "API key saved but validation failed. Please check your key."
+                session['api_key_message_type'] = "warning"
+        except:
+            session['api_key_message'] = "API key saved but could not validate. Please check your connection."
+            session['api_key_message_type'] = "warning"
+    else:
+        session['api_key_message'] = "Please enter a valid API key."
+        session['api_key_message_type'] = "error"
+    
+    return redirect('/')
+
+@app.route('/clear-api-key', methods=['POST'])
+def clear_api_key():
+    session.pop('numverify_api_key', None)
+    search_app.set_api_key(None)
+    session['api_key_message'] = "API key cleared."
+    session['api_key_message_type'] = "success"
+    return redirect('/')
 
 @app.route('/api/search/<phone_number>')
 def api_search(phone_number):
+    search_app.set_api_key(session.get('numverify_api_key'))
     results = search_app.phone_search(phone_number)
     return jsonify(results)
 
